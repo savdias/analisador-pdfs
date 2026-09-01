@@ -1,6 +1,7 @@
 import os
 import pandas as pd
 import streamlit as st
+import plotly.express as px
 from analisepdf import analisar_pdf_para_planilha
 
 # Configuração da página
@@ -39,28 +40,26 @@ dicionario_de_busca = {
     ] 
 }
 
-# Define as categorias disponíveis antes de construir a interface
 categorias_disponiveis = list(dicionario_de_busca.keys())
 
 # =========================================================================
 # INTERFACE WEB COM STREAMLIT
 # =========================================================================
-st.title("📄 Analisador de PDFs")
+st.title("📄 Analisador de PDFs e Textos")
 
 # CAIXA 1: CONFIGURAÇÕES DE BUSCA
 with st.container(border=True):
     st.subheader("⚙️ Configurações de Busca")
     
     categorias_selecionadas = st.multiselect(
-    "Quais categorias de palavras-chave você quer analisar?",
-    options=categorias_disponiveis,
-    default=categorias_disponiveis
-)
-st.caption("💡 **Observação:** Você pode selecionar mais de uma categoria ou remover as que não desejar. Recomendado para uma busca mais simplificada")
+        "Quais categorias de palavras-chave você quer analisar?",
+        options=categorias_disponiveis,
+        default=categorias_disponiveis
+    )
+    st.caption("💡 **Observação:** Selecione as categorias desejadas para a análise.")
+    
+    palavras_customizadas = st.text_input("Quer buscar outras palavras específicas? Digite separadas por vírgula:")
 
-palavras_customizadas = st.text_input("Quer buscar outras palavras específicas? Digite separadas por vírgula:")
-
-# Processamento das categorias e palavras do usuário
 dicionario_filtrado = {categoria: dicionario_de_busca[categoria] for categoria in categorias_selecionadas}
 
 if palavras_customizadas:
@@ -70,7 +69,7 @@ if palavras_customizadas:
 
 # CAIXA 2: UPLOAD E BOTÃO DE DISPARO
 with st.container(border=True):
-    st.subheader("📂 Processamento")
+    st.subheader("📂 1. Processamento de PDF")
     
     col1, col2 = st.columns(2)
     
@@ -82,7 +81,7 @@ with st.container(border=True):
         st.write(" ")
         btn_iniciar = st.button("🚀 Iniciar Análise", use_container_width=True)
 
-# LÓGICA DE PROCESSAMENTO E EXIBIÇÃO DE RESULTADOS
+# LÓGICA DE PROCESSAMENTO (PDF)
 if btn_iniciar:
     if arquivo_enviado is None:
         st.warning("⚠️ Por favor, selecione um arquivo PDF antes de iniciar a análise.")
@@ -92,7 +91,6 @@ if btn_iniciar:
         caminho_pdf_temp = "temp_processamento.pdf"
         caminho_excel_saida = "resultado_analise.xlsx"
         
-        # Salva arquivo temporário
         with open(caminho_pdf_temp, "wb") as f:
             f.write(arquivo_enviado.getbuffer())
         
@@ -100,11 +98,10 @@ if btn_iniciar:
             analisar_pdf_para_planilha(caminho_pdf_temp, dicionario_filtrado, caminho_excel_saida)
         
         st.balloons()
-        st.success("Análise concluída com sucesso!")
         
-        # CAIXA 3: RESULTADOS E GRÁFICOS
+        # CAIXA 3: RESULTADOS E GRÁFICOS DO PDF
         with st.container(border=True):
-            st.header("📊 Resultados Estatísticos")
+            st.header("📊 Resultados da Análise Automática")
             
             try:
                 df = pd.read_excel(caminho_excel_saida)
@@ -113,25 +110,19 @@ if btn_iniciar:
                     st.subheader("Prévia dos Dados Encontrados")
                     st.dataframe(df.head(10))
                     
-                    colunas_da_planilha = df.columns.tolist()
-                    
-                    # Identifica a coluna correta para montar o gráfico de barras
-                    coluna_alvo = None
-                    for col in ["Categoria", "Gênero", "Palavra-chave", "Termo"]:
-                        if col in colunas_da_planilha:
-                            coluna_alvo = col
-                            break
-                            
-                    if coluna_alvo:
-                        st.subheader(f"Contagem por {coluna_alvo}")
-                        contagem = df[coluna_alvo].value_counts()
-                        st.bar_chart(contagem)
-                    else:
-                        st.info("Planilha gerada com sucesso!")
+                    # Gráfico de Pizza focado nos Gêneros
+                    if "Gêneros Identificados na Página" in df.columns:
+                        st.subheader("Distribuição por Gêneros Textuais")
+                        # Conta as ocorrências
+                        contagem = df["Gêneros Identificados na Página"].value_counts().reset_index()
+                        contagem.columns = ["Gênero", "Quantidade"]
+                        
+                        # Gera o gráfico de pizza
+                        fig = px.pie(contagem, values="Quantidade", names="Gênero", hole=0.3)
+                        st.plotly_chart(fig, use_container_width=True)
             except Exception as e:
                 st.error(f"Erro ao exibir estatísticas: {e}")
             
-            # Botão de Download dentro da caixa de resultados
             if os.path.exists(caminho_excel_saida):
                 with open(caminho_excel_saida, "rb") as file:
                     st.download_button(
@@ -142,6 +133,46 @@ if btn_iniciar:
                         use_container_width=True
                     )
         
-        # Limpeza do arquivo temporário
         if os.path.exists(caminho_pdf_temp):
             os.remove(caminho_pdf_temp)
+
+st.markdown("---")
+
+# CAIXA 4: ANÁLISE CUSTOMIZADA DE PLANILHAS (Fica sempre visível embaixo)
+with st.container(border=True):
+    st.header("📈 2. Análise de Planilha Customizada")
+    st.write("Faça o upload da sua planilha editada para gerar gráficos com base nas colunas.")
+    
+    planilha_customizada = st.file_uploader("Selecione sua planilha", type=["xlsx", "xls"])
+    
+    if planilha_customizada is not None:
+        try:
+            df_custom = pd.read_excel(planilha_customizada)
+            st.success("Planilha carregada com sucesso!")
+            
+            colunas_disponiveis = df_custom.columns.tolist()
+            
+            # Agora o usuário escolhe duas colunas: uma para os rótulos e outra para os valores
+            col1, col2 = st.columns(2)
+            with col1:
+                coluna_nomes = st.selectbox("Escolha a coluna para as CATEGORIAS (ex: Categoria):", colunas_disponiveis)
+            with col2:
+                coluna_valores = st.selectbox("Escolha a coluna para os VALORES (ex: Percentual do corpus):", colunas_disponiveis)
+            
+            if coluna_nomes and coluna_valores:
+                tipo_grafico = st.radio("Escolha o tipo de gráfico:", ["Gráfico de Pizza", "Gráfico de Barras"], horizontal=True)
+                
+                # Remove linhas vazias se houver
+                df_plot = df_custom.dropna(subset=[coluna_nomes, coluna_valores])
+                
+                if tipo_grafico == "Gráfico de Pizza":
+                    # Usa os valores diretamente da planilha
+                    fig_custom = px.pie(df_plot, values=coluna_valores, names=coluna_nomes)
+                    st.plotly_chart(fig_custom, use_container_width=True)
+                else:
+                    # Gráfico de barras usando Plotly para ficar mais bonito
+                    fig_custom = px.bar(df_plot, x=coluna_nomes, y=coluna_valores, color=coluna_nomes)
+                    st.plotly_chart(fig_custom, use_container_width=True)
+                    
+        except Exception as e:
+            st.error(f"Erro ao ler a planilha: {e}")
