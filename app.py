@@ -121,14 +121,66 @@ def converter_para_excel(df_resultado, metadados):
                 cell.font = Font(bold=True)
                 
     return buffer.getvalue()
+# -------------------------------------------------------------------------
+# SEÇÃO 1: EXTRAÇÃO DO PDF
+# -------------------------------------------------------------------------
+st.header("1. Extração de Trechos do PDF")
 
-dicionario_de_busca = {
-    "Agro": ["agronegócio", "agropecuária", "setor agrícola", "campo"],
-    "Tecnologia e Inovação": ["tecnologia", "inovação", "drones", "automação"],
-    "Mineração e Extração": ["mineração", "garimpo", "extração", "jazidas"],
-    "Sustentabilidade": ["recuperação ambiental", "sustentabilidade", "reflorestamento"]
-}
-categorias_disponiveis = list(dicionario_de_busca.keys())
+with st.container(border=True):
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        arquivo_enviado = st.file_uploader("Selecione o arquivo PDF", type=["pdf"])
+        
+        # --- NOVA CAIXA DE TEXTO EDITÁVEL ---
+        st.markdown("**Categorias e Palavras-chave de Busca:**")
+        st.caption("Formato -> Nome da Categoria: palavra1, palavra2, palavra3")
+        
+        dicionario_padrao = (
+            "Agro: agronegócio, agropecuária, setor agrícola, campo\n"
+            "Tecnologia e Inovação: tecnologia, inovação, drones, automação\n"
+            "Mineração e Extração: mineração, garimpo, extração, jazidas\n"
+            "Sustentabilidade: recuperação ambiental, sustentabilidade, reflorestamento"
+        )
+        
+        texto_categorias = st.text_area("Edite as categorias como preferir:", value=dicionario_padrao, height=150)
+        
+    with col2:
+        btn_iniciar = st.button("🚀 Processar PDF e Gerar Planilha Bruta", use_container_width=True)
+
+        if btn_iniciar:
+            if arquivo_enviado is None:
+                st.warning("⚠️ Selecione um arquivo PDF.")
+            else:
+                # Transforma o texto que o usuário digitou de volta em um dicionário para o seu script
+                dicionario_filtrado = {}
+                for linha in texto_categorias.strip().split('\n'):
+                    if ':' in linha:
+                        cat, palavras = linha.split(':', 1)
+                        lista_palavras = [p.strip() for p in palavras.split(',')]
+                        if cat.strip() and lista_palavras:
+                            dicionario_filtrado[cat.strip()] = lista_palavras
+
+                if not dicionario_filtrado:
+                    st.error("❌ Nenhuma categoria válida encontrada. Siga o formato 'Categoria: palavra1, palavra2'")
+                else:
+                    caminho_pdf_temp = "temp_processamento.pdf"
+                    caminho_excel_saida = "resultado_analise.xlsx"
+                    
+                    with open(caminho_pdf_temp, "wb") as f:
+                        f.write(arquivo_enviado.getbuffer())
+                    
+                    with st.spinner("Extraindo trechos do PDF..."):
+                        analisar_pdf_para_planilha(caminho_pdf_temp, dicionario_filtrado, caminho_excel_saida)
+                    
+                    st.success("Extração concluída!")
+                    if os.path.exists(caminho_excel_saida):
+                        with open(caminho_excel_saida, "rb") as file:
+                            st.download_button(
+                                label="📥 Baixar Planilha de Trechos Extraídos (.xlsx)",
+                                data=file,
+                                file_name=f"{os.path.splitext(arquivo_enviado.name)[0]}_trechos.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                            )
 
 st.title("📄 Analisador de PDFs & Categorizador Inteligente com Ollama")
 
