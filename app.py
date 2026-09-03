@@ -135,16 +135,26 @@ with st.container(border=True):
         arquivo_enviado = st.file_uploader("Selecione o arquivo PDF", type=["pdf"])
         
         st.markdown("**Categorias e Palavras-chave de Busca:**")
-        st.caption("Formato -> Nome da Categoria: palavra1, palavra2, palavra3")
+        st.caption("Edite a tabela abaixo. Clique na última linha vazia para adicionar novas categorias.")
         
-        dicionario_padrao = (
-            "Agro: agronegócio, agropecuária, setor agrícola, campo\n"
-            "Tecnologia e Inovação: tecnologia, inovação, drones, automação\n"
-            "Mineração e Extração: mineração, garimpo, extração, jazidas\n"
-            "Sustentabilidade: recuperação ambiental, sustentabilidade, reflorestamento"
+        # Cria os dados padrão divididos em colunas
+        dados_iniciais = pd.DataFrame({
+            "Categoria": ["Agro", "Tecnologia e Inovação", "Mineração e Extração", "Sustentabilidade"],
+            "Palavras-chave": [
+                "agronegócio, agropecuária, setor agrícola, campo",
+                "tecnologia, inovação, drones, automação",
+                "mineração, garimpo, extração, jazidas",
+                "recuperação ambiental, sustentabilidade, reflorestamento"
+            ]
+        })
+        
+        # Renderiza a tabela editável na interface
+        tabela_editavel = st.data_editor(
+            dados_iniciais,
+            num_rows="dynamic", # Isso é o que permite adicionar/deletar linhas
+            use_container_width=True,
+            hide_index=True
         )
-        
-        texto_categorias = st.text_area("Edite as categorias como preferir:", value=dicionario_padrao, height=150)
         
     with col2:
         btn_iniciar = st.button("🚀 Processar PDF e Gerar Planilha Bruta", use_container_width=True)
@@ -153,16 +163,20 @@ with st.container(border=True):
             if arquivo_enviado is None:
                 st.warning("⚠️ Selecione um arquivo PDF.")
             else:
+                # Transforma a tabela que o usuário editou de volta para o formato que a IA entende
                 dicionario_filtrado = {}
-                for linha in texto_categorias.strip().split('\n'):
-                    if ':' in linha:
-                        cat, palavras = linha.split(':', 1)
-                        lista_palavras = [p.strip() for p in palavras.split(',')]
-                        if cat.strip() and lista_palavras:
-                            dicionario_filtrado[cat.strip()] = lista_palavras
+                for index, row in tabela_editavel.iterrows():
+                    cat = str(row["Categoria"]).strip()
+                    palavras = str(row["Palavras-chave"]).strip()
+                    
+                    # Ignora linhas que foram deixadas em branco acidentalmente
+                    if cat and cat.lower() != 'nan' and palavras and palavras.lower() != 'nan':
+                        lista_palavras = [p.strip() for p in palavras.split(',') if p.strip()]
+                        if lista_palavras:
+                            dicionario_filtrado[cat] = lista_palavras
 
                 if not dicionario_filtrado:
-                    st.error("❌ Nenhuma categoria válida encontrada. Siga o formato 'Categoria: palavra1, palavra2'")
+                    st.error("❌ Nenhuma categoria válida encontrada. Preencha a tabela corretamente.")
                 else:
                     caminho_pdf_temp = "temp_processamento.pdf"
                     caminho_excel_saida = "resultado_analise.xlsx"
@@ -182,9 +196,6 @@ with st.container(border=True):
                                 file_name=f"{os.path.splitext(arquivo_enviado.name)[0]}_trechos.xlsx",
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                             )
-
-st.markdown("---")
-
 # -------------------------------------------------------------------------
 # SEÇÃO 2: CATEGORIZAÇÃO VIA OLLAMA
 # -------------------------------------------------------------------------
