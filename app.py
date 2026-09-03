@@ -137,21 +137,117 @@ with st.container(border=True):
         st.markdown("**Categorias e Palavras-chave de Busca:**")
         st.caption("Edite a tabela abaixo. Clique na última linha vazia para adicionar novas categorias.")
         
-        # Cria os dados padrão divididos em colunas
-        dados_iniciais = pd.DataFrame({
-            "Categoria": ["Agro", "Tecnologia e Inovação", "Mineração e Extração", "Sustentabilidade"],
-            "Palavras-chave": [
-                "agronegócio, agropecuária, setor agrícola, campo",
-                "tecnologia, inovação, drones, automação",
-                "mineração, garimpo, extração, jazidas",
-                "recuperação ambiental, sustentabilidade, reflorestamento"
+        # 1. O dicionário completo com suas categorias
+        palavras_chave_por_categoria = {
+            "1. Conceitos gerais de agronegócio e organização da cadeia": [
+                "agronegócio", "negócio agrícola", "negócio agropecuário", "agropecuária", "setor agropecuário", 
+                "setor agrícola", "setor rural", "cadeia produtiva", "cadeia produtiva agropecuária", 
+                "cadeia agroindustrial", "complexo agroindustrial", "agroindústria", "sistema agroalimentar", 
+                "sistema alimentar", "produção rural", "produção do campo", "setor primário", "campo e indústria", 
+                "campo e cidade", "produção e mercado", "produção e consumo", "relações campo-cidade"
+            ],
+            "2. Insumos, recursos e suporte à produção": [
+                "insumos", "insumos agrícolas", "insumos agropecuários", "sementes", "mudas", "genética", 
+                "melhoramento genético", "fertilizantes", "adubos", "adubação", "corretivos", "defensivos", 
+                "defensivos agrícolas", "agrotóxicos", "pesticidas", "herbicidas", "inseticidas", "fungicidas", 
+                "bioinsumos", "crédito rural", "financiamento", "seguro rural", "assistência técnica", 
+                "extensão rural", "planejamento produtivo", "pesquisa agropecuária", "crédito agrícola", "seguro agrícola"
+            ],
+            "3. Agricultura e produção vegetal": [
+                "agricultura", "agrícola", "lavoura", "plantio", "cultivo", "colheita", "safra", "entressafra", 
+                "produtividade", "monocultura", "policultura", "agricultura intensiva", "agricultura extensiva", 
+                "culturas permanentes", "culturas temporárias", "soja", "milho", "café", "algodão", "arroz", 
+                "feijão", "trigo", "cana-de-açúcar", "cana", "frutas", "fruticultura", "hortaliças", "horticultura", 
+                "citricultura", "silvicultura", "extrativismo vegetal"
+            ],
+            "4. Pecuária e produção animal": [
+                "pecuária", "criação animal", "rebanho", "gado", "bovino", "bovinocultura", "suinocultura", 
+                "avicultura", "caprinocultura", "ovinocultura", "piscicultura", "aquicultura", "produção de leite", 
+                "produção de carne", "produção de ovos", "confinamento", "pastagem", "manejo animal", 
+                "sanidade animal", "vacinação animal", "abate", "criação intensiva", "criação extensiva", 
+                "pecuária intensiva", "pecuária extensiva"
+            ],
+            "5. Máquinas, mecanização e infraestrutura produtiva": [
+                "máquinas", "máquinas agrícolas", "tratores", "implementos", "irrigação", "mecanização", 
+                "mecanização do trabalho"
+            ],
+            "6. Beneficiamento, transformação e agroindústria": [
+                "beneficiamento", "processamento", "transformação", "industrialização", "agroindustrial", 
+                "frigorífico", "laticínio", "abatedouro", "usina", "moagem", "torrefação", "pasteurização", 
+                "conservação", "processamento de alimentos", "indústria de alimentos", "indústria alimentícia", 
+                "indústria de bebidas", "indústria sucroenergética", "etanol", "biodiesel", "biocombustível", 
+                "biocombustíveis", "celulose", "papel", "óleo vegetal", "farelo", "açúcar", "suco", 
+                "processamento de carnes", "processamento de leite", "fabricação de derivados"
+            ],
+            "7. Armazenamento, transporte e logística": [
+                "armazenamento", "armazenagem", "silos", "armazéns", "entrepostos", "transporte", "rodovias", 
+                "ferrovias", "hidrovias", "portos", "logística", "distribuição", "cadeia de frio", "embalagem", 
+                "escoamento da produção"
+            ],
+            "8. Comercialização, mercados e economia do agronegócio": [
+                "comercialização", "atacado", "varejo", "exportação", "importação", "mercado interno", 
+                "mercado externo", "commodities", "commodity", "preço agrícola", "preços agrícolas", 
+                "bolsa de mercadorias", "agregação de valor", "rastreabilidade", "emprego", "renda", "PIB", 
+                "produto interno bruto", "balança comercial"
+            ],
+            "9. Tecnologia, inovação e agricultura digital": [
+                "agricultura de precisão", "automação", "sensores", "drones", "satélites", "georreferenciamento", 
+                "biotecnologia", "transgenia", "transgênico", "organismos geneticamente modificados", 
+                "inteligência de dados", "monitoramento", "irrigação inteligente", "plantio direto", 
+                "controle biológico", "agricultura digital", "conectividade rural", "inovação agropecuária", 
+                "inovação agrícola", "agricultura 4.0", "automação agroindustrial"
+            ],
+            "10. Impactos ambientais e uso de recursos naturais": [
+                "desmatamento", "erosão", "contaminação", "uso da água", "consumo de água", "uso do solo", 
+                "degradação", "emissao", "emissões", "gases de efeito estufa", "metano", "biodiversidade", 
+                "queimadas", "resíduos", "efluentes"
+            ],
+            "11. Sustentabilidade, conservação e mitigação ambiental": [
+                "recuperação", "mitigação", "preservação", "sustentabilidade", "sustentável", "economia circular", 
+                "reaproveitamento", "redução de perdas", "aproveitamento de resíduos", "recuperação de solos", 
+                "integração lavoura-pecuária-floresta", "ILPF", "mata ciliar", "reserva legal", 
+                "área de preservação permanente", "APP", "agroecologia", "agricultura orgânica", "produção orgânica", 
+                "produção integrada", "sistema agroflorestal", "produção sustentável"
+            ],
+            "12. Trabalho, relações sociais e questões agrárias": [
+                "trabalho rural", "trabalhador rural", "êxodo rural", "concentração fundiária", "estrutura fundiária", 
+                "reforma agrária", "assentamento", "conflito no campo", "propriedade rural", "pequena propriedade", 
+                "grande propriedade", "latifúndio", "minifúndio", "camponês", "campesinato", "pequeno produtor", 
+                "grande produtor", "direitos trabalhistas", "trabalho análogo à escravidão", "trabalho infantil", 
+                "conflito fundiário"
+            ],
+            "13. Formas de organização e modelos de produção rural": [
+                "cooperativismo", "cooperativa", "associativismo", "agricultura familiar", "agricultura empresarial", 
+                "agricultura comercial", "agricultura de subsistência", "agricultura convencional"
+            ],
+            "14. Políticas públicas, regulação e institucionalização": [
+                "política agrícola", "política agrária", "regularização fundiária", "zoneamento agrícola", 
+                "fiscalização", "licenciamento", "legislação ambiental", "código florestal", "vigilância sanitária", 
+                "inspeção sanitária", "certificação", "subsídio", "incentivo fiscal"
+            ],
+            "15. Segurança alimentar, abastecimento e consumo": [
+                "segurança alimentar", "soberania alimentar", "abastecimento", "fome", "consumo", "alimentação", 
+                "alimento", "alimentos", "desperdício", "desperdício de alimentos", "perda de alimentos", 
+                "perdas pós-colheita", "conservação de alimentos", "qualidade dos alimentos", "origem dos alimentos", 
+                "rastreabilidade dos alimentos", "cadeia alimentar", "preço dos alimentos", "acesso aos alimentos"
             ]
+        }
+        
+        # 2. Transforma o dicionário em listas para criar a tabela
+        categorias_lista = list(palavras_chave_por_categoria.keys())
+        # Junta a lista de palavras com vírgula para aparecer certinho na tabela
+        palavras_lista = [", ".join(palavras) for palavras in palavras_chave_por_categoria.values()]
+
+        # 3. Cria a tabela visual com os dados
+        dados_iniciais = pd.DataFrame({
+            "Categoria": categorias_lista,
+            "Palavras-chave": palavras_lista
         })
         
         # Renderiza a tabela editável na interface
         tabela_editavel = st.data_editor(
             dados_iniciais,
-            num_rows="dynamic", # Isso é o que permite adicionar/deletar linhas
+            num_rows="dynamic",
             use_container_width=True,
             hide_index=True
         )
@@ -169,7 +265,6 @@ with st.container(border=True):
                     cat = str(row["Categoria"]).strip()
                     palavras = str(row["Palavras-chave"]).strip()
                     
-                    # Ignora linhas que foram deixadas em branco acidentalmente
                     if cat and cat.lower() != 'nan' and palavras and palavras.lower() != 'nan':
                         lista_palavras = [p.strip() for p in palavras.split(',') if p.strip()]
                         if lista_palavras:
