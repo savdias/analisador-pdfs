@@ -236,4 +236,193 @@ with st.container(border=True):
 
         if btn_iniciar:
             if arquivo_enviado is None:
-                st.warning("⚠️ Selecione um
+                st.warning("⚠️ Selecione um arquivo PDF.")
+            else:
+                dicionario_filtrado = {}
+                for index, row in tabela_editavel.iterrows():
+                    cat = str(row["Categoria"]).strip()
+                    palavras = str(row["Palavras-chave"]).strip()
+                    
+                    if cat and cat.lower() != 'nan' and palavras and palavras.lower() != 'nan':
+                        lista_palavras = [p.strip() for p in palavras.split(',') if p.strip()]
+                        if lista_palavras:
+                            dicionario_filtrado[cat] = lista_palavras
+
+                if not dicionario_filtrado:
+                    st.error("❌ Nenhuma categoria válida encontrada. Preencha a tabela corretamente.")
+                else:
+                    caminho_pdf_temp = "temp_processamento.pdf"
+                    caminho_excel_saida = "resultado_analise.xlsx"
+                    
+                    with open(caminho_pdf_temp, "wb") as f:
+                        f.write(arquivo_enviado.getbuffer())
+                    
+                    with st.spinner("Extraindo trechos do livro de Física..."):
+                        analisar_pdf_para_planilha(caminho_pdf_temp, dicionario_filtrado, caminho_excel_saida)
+                    
+                    st.success("Extração concluída!")
+                    if os.path.exists(caminho_excel_saida):
+                        with open(caminho_excel_saida, "rb") as file:
+                            st.download_button(
+                                label="📥 Baixar Planilha de Trechos Extraídos (.xlsx)",
+                                data=file,
+                                file_name=f"{os.path.splitext(arquivo_enviado.name)[0]}_trechos_representatividade.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                            )
+
+# -------------------------------------------------------------------------
+# SEÇÃO 2: CATEGORIZAÇÃO VIA OLLAMA
+# -------------------------------------------------------------------------
+st.header("🦙 2. Categorização Inteligente Local (Ollama)")
+
+with st.container(border=True):
+    col_c1, col_c2 = st.columns(2)
+    with col_c1:
+        modelo_ollama = st.text_input("Modelo do Ollama:", value="llama3.2")
+    with col_c2:
+        host_ollama = st.text_input("Endereço do Servidor Ollama:", value="http://localhost:11434")
+    
+    planilha_para_ia = st.file_uploader("Selecione a planilha com os trechos extraídos para categorizar", type=["xlsx", "xls"])
+    
+    if planilha_para_ia is not None:
+        df_ia = pd.read_excel(planilha_para_ia)
+        colunas = df_ia.columns.tolist()
+        idx_trecho = colunas.index("Trechos Encontrados") if "Trechos Encontrados" in colunas else 0
+        coluna_trechos = st.selectbox("Selecione a coluna que contém os TRECHOS de texto:", colunas, index=idx_trecho)
+        
+        st.subheader("⚙️ Defina os Critérios de Análise (Representatividade Feminina)")
+        
+        legenda_padrao = (
+            "A - Protagonismo Científico Feminino (biografia, descoberta, teoria ou contribuição relevante de mulher cientista/engenheira)\n"
+            "B - Discussão de Gênero ou Representatividade (debate sobre mulheres na ciência, equidade, barreiras históricas ou premiações)\n"
+            "C - Presença Figurativa / Cotidiana (mulher ou nome feminino citado apenas como personagem de exercício, exemplo ou ilustração)\n"
+            "D - Sem Relação / Falso Positivo (termo meramente gramatical, cor/adjetivo como 'luz clara' ou sem referência a mulheres)\n"
+            "E - Ilegível ou Incompleto (trecho truncado ou sem contexto suficiente)"
+        )
+        
+        categorias_ia = st.text_area("Legenda de Classificação (A-E):", legenda_padrao, height=145)
+        
+        instrucao_padrao = (
+            "Você é um pesquisador analisando a representatividade feminina em livros didáticos de Física do Ensino Médio (PNLD). "
+            "Analise o trecho fornecido com base na legenda e responda OBRIGATORIAMENTE em uma única linha no formato separado por '|':\n"
+            "Letra da Classificação (apenas A, B, C, D ou E) | Categoria Principal (ex: Protagonismo Científico, Questões de Gênero, Personagem de Exercício, Falso Positivo) | "
+            "Gênero Textual (ex: Biografia / Boxe Histórico, Exercício / Vestibular, Texto Expositivo, Infográfico / Legenda, Divulgação Científica) | Breve Justificativa"
+        )
+        prompt_instrucao = st.text_area("Instruções para a IA:", instrucao_padrao, height=125)
+        
+        if st.button("🧠 Classificar Trechos com Ollama", type="primary"):
+            if not host_ollama.strip() or "seu-link-aqui" in host_ollama:
+                st.error("❌ Por favor, insira o endereço válido do Ollama.")
+            else:
+                progresso = st.progress(0)
+                status_text = st.empty()
+                
+                classificacoes, categorias, generos, justificativas = [], [], [], []
+                total_linhas = len(df_ia)
+                
+                url_base = host_ollama.strip().rstrip('/')
+                endpoint = f"{url_base}/api/generate"
+                
+                headers = {
+                    "ngrok-skip-browser-warning": "true",
+                    "User-Agent": "Mozilla/5.0",
+                    "Content-Type": "application/json"
+                }
+                
+                for index, row in df_ia.iterrows():
+                    trecho = str(row[coluna_trechos])
+                    prompt_completo = f"{prompt_instrucao}\n\nLegenda:\n{categorias_ia}\n\nTrecho:\n\"{trecho}\""
+                    payload = {"model": modelo_ollama, "prompt": prompt_completo, "stream": False}
+                    
+                    try:
+                        response = requests.post(endpoint, json=payload, headers=headers, timeout=60)
+                        response.raise_for_status()
+                        resposta_texto = response.json().get("response", "").strip()
+                        
+                        partes = [p.strip() for p in resposta_texto.split("|")]
+                        match_letra = re.search(r'\b([A-E])\b', partes[0].upper()) if partes else None
+                        letra_classif = match_letra.group(1) if match_letra else (partes[0][0].upper() if partes and partes[0] else "E")
+                        
+                        if len(partes) >= 4:
+                            classificacoes.append(letra_classif)
+                            categorias.append(partes[1])
+                            generos.append(partes[2])
+                            justificativas.append(partes[3])
+                        elif len(partes) == 2:
+                            classificacoes.append(letra_classif)
+                            categorias.append("Geral")
+                            generos.append("Texto Didático")
+                            justificativas.append(partes[1])
+                        else:
+                            classificacoes.append("E")
+                            categorias.append("Geral")
+                            generos.append("Texto Didático")
+                            justificativas.append(resposta_texto)
+                    except Exception as e:
+                        classificacoes.append("Erro")
+                        categorias.append("Erro")
+                        generos.append("Erro")
+                        justificativas.append(str(e))
+                    
+                    progresso.progress((index + 1) / total_linhas)
+                    status_text.text(f"Analisando trecho {index + 1} de {total_linhas}...")
+                
+                df_ia["Classificação IA"] = classificacoes
+                df_ia["Categoria Principal IA"] = categorias
+                df_ia["Gênero Textual"] = generos
+                df_ia["Justificativa IA"] = justificativas
+                
+                st.session_state["df_categorizado"] = df_ia
+                st.success("✅ Categorização concluída!")
+
+st.markdown("---")
+
+# -------------------------------------------------------------------------
+# SEÇÃO 3: GRÁFICOS
+# -------------------------------------------------------------------------
+st.header("📈 3. Visualização de Gráficos")
+
+if "df_categorizado" in st.session_state:
+    df_plot = st.session_state["df_categorizado"]
+else:
+    planilha_grafico = st.file_uploader("Ou faça upload de uma planilha já categorizada para ver os gráficos", type=["xlsx", "xls"])
+    df_plot = pd.read_excel(planilha_grafico) if planilha_grafico is not None else None
+
+if df_plot is not None:
+    colunas_plot = df_plot.columns.tolist()
+    col1, col2 = st.columns(2)
+    with col1:
+        idx_default = colunas_plot.index("Classificação IA") if "Classificação IA" in colunas_plot else 0
+        coluna_cat = st.selectbox("Coluna das Categorias:", colunas_plot, index=idx_default)
+    with col2:
+        tipo_grafico = st.radio("Tipo de Gráfico:", ["Gráfico de Pizza", "Gráfico de Barras", "Diagrama (Funil)"], horizontal=True)
+    
+    contagem = df_plot[coluna_cat].value_counts().reset_index()
+    contagem.columns = [coluna_cat, "Quantidade"]
+    
+    if tipo_grafico == "Gráfico de Pizza":
+        fig = px.pie(contagem, values="Quantidade", names=coluna_cat, title="Distribuição por Classificação")
+    elif tipo_grafico == "Gráfico de Barras":
+        fig = px.bar(contagem, x=coluna_cat, y="Quantidade", color=coluna_cat, title="Quantidade por Classificação")
+    else:
+        fig = px.funnel(contagem, x="Quantidade", y=coluna_cat, color=coluna_cat, title="Diagrama de Funil de Classificações")
+    
+    st.plotly_chart(fig, use_container_width=True)
+
+# -------------------------------------------------------------------------
+# SEÇÃO 4: DOWNLOAD FINAL COM 5 ABAS
+# -------------------------------------------------------------------------
+if df_plot is not None:
+    st.markdown("---")
+    st.header("✅ 4. Exportar Planilha Final (5 Abas)")
+    st.info("💡 Preencha os Dados do Livro Didático no menu lateral esquerdo antes de baixar!")
+    
+    excel_final = converter_para_excel(df_plot, metadados_livro)
+    
+    st.download_button(
+        label="📥 BAIXAR PLANILHA FINAL FORMATADA (5 ABAS)",
+        data=excel_final,
+        file_name="Analise_Representatividade_Feminina_PNLD.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True
+    )
