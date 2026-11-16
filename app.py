@@ -1,5 +1,6 @@
 import os
 import io
+import re
 import pandas as pd
 import streamlit as st
 import plotly.express as px
@@ -7,22 +8,26 @@ import requests
 from analisepdf import analisar_pdf_para_planilha
 from openpyxl.styles import Alignment, Font
 
-st.set_page_config(page_title="Analisador de PDFs e Categorizador Local (Ollama)", page_icon="📄", layout="wide")
+st.set_page_config(
+    page_title="Representatividade Feminina no PNLD - Física",
+    page_icon="👩‍🔬",
+    layout="wide"
+)
 
-st.title("📄 Analisador de PDFs & Categorizador Inteligente com Ollama")
+st.title("👩‍🔬 Analisador de Representatividade Feminina no PNLD (Física)")
 
 # ==========================================
-# MENU LATERAL: DADOS DO MATERIAL
+# MENU LATERAL: DADOS DO MATERIAL (PNLD)
 # ==========================================
-st.sidebar.header("📚 1. Dados do Material")
-st.sidebar.info("Preencha estes dados antes de exportar a planilha final.")
+st.sidebar.header("📚 1. Dados do Livro Didático")
+st.sidebar.info("Preencha os metadados da obra do PNLD antes de exportar a planilha final.")
 
 meta_livro = st.sidebar.text_input("Nome do Livro ou Coleção:")
 meta_editora = st.sidebar.text_input("Editora:")
 meta_volume = st.sidebar.text_input("Volume:")
-meta_etapa = st.sidebar.text_input("Etapa de ensino:")
-meta_ano = st.sidebar.text_input("Ano ou série:")
-meta_disciplina = st.sidebar.text_input("Disciplina:")
+meta_etapa = st.sidebar.text_input("Etapa de ensino:", value="Ensino Médio")
+meta_ano = st.sidebar.text_input("Ano, série ou edição PNLD:")
+meta_disciplina = st.sidebar.text_input("Disciplina:", value="Física")
 meta_observacao = st.sidebar.text_area("Observações gerais (Opcional):")
 
 metadados_livro = {
@@ -42,20 +47,36 @@ def converter_para_excel(df_resultado, metadados):
     buffer = io.BytesIO()
     
     col_pagina = "Página" if "Página" in df_resultado.columns else df_resultado.columns[0]
-    col_palavra = "Palavras-Chave" if "Palavras-Chave" in df_resultado.columns else "Categorias" if "Categorias" in df_resultado.columns else df_resultado.columns[1]
+    col_palavra = (
+        "Palavras-Chave" if "Palavras-Chave" in df_resultado.columns
+        else "Categorias" if "Categorias" in df_resultado.columns
+        else df_resultado.columns[1]
+    )
     col_trecho = next((col for col in df_resultado.columns if "Trecho" in col), df_resultado.columns[2])
     
     col_classif_ia = "Classificação IA" if "Classificação IA" in df_resultado.columns else ""
     col_cat_ia = "Categoria Principal IA" if "Categoria Principal IA" in df_resultado.columns else ""
-    col_genero_ia = "Gênero Textual" if "Gênero Textual" in df_resultado.columns else ""
+    col_genero_ia = (
+        "Gênero Textual" if "Gênero Textual" in df_resultado.columns
+        else "Gêneros Identificados na Página" if "Gêneros Identificados na Página" in df_resultado.columns
+        else ""
+    )
     col_just_ia = "Justificativa IA" if "Justificativa IA" in df_resultado.columns else ""
 
     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
         
         # --- ABA 1: 00_COMECE_AQUI ---
         df_aba1 = pd.DataFrame({
-            "Dado do livro": ["Nome do Livro ou Coleção", "Editora", "Volume", "Etapa de ensino", "Ano ou série", "Disciplina", "Observações gerais"],
-            "Preenchimento": [metadados["livro"], metadados["editora"], metadados["volume"], metadados["etapa"], metadados["ano"], metadados["disciplina"], metadados["observacao"]]
+            "Dado do livro": [
+                "Nome do Livro ou Coleção", "Editora", "Volume",
+                "Etapa de ensino", "Ano, série ou edição PNLD",
+                "Disciplina", "Observações gerais"
+            ],
+            "Preenchimento": [
+                metadados["livro"], metadados["editora"], metadados["volume"],
+                metadados["etapa"], metadados["ano"], metadados["disciplina"],
+                metadados["observacao"]
+            ]
         })
         df_aba1.to_excel(writer, index=False, sheet_name='00_COMECE_AQUI')
         
@@ -83,7 +104,7 @@ def converter_para_excel(df_resultado, metadados):
         
         df_aba2["Há elemento visual?*"] = ""
         df_aba2["Necessita revisão?*"] = ""
-        df_aba2["Observações"] = "" # Fica em branco para preenchimento manual no Excel
+        df_aba2["Observações"] = ""
         
         df_aba2.to_excel(writer, index=False, sheet_name='01_REGISTRO_UR')
         
@@ -106,7 +127,10 @@ def converter_para_excel(df_resultado, metadados):
             Codigos_URs=("Código da UR", lambda x: ", ".join(x))
         ).reset_index()
         
-        df_aba5.rename(columns={"Palavra-chave localizada": "Palavra ou expressão", "Codigos_URs": "Código(s) das URs"}, inplace=True)
+        df_aba5.rename(columns={
+            "Palavra-chave localizada": "Palavra ou expressão",
+            "Codigos_URs": "Código(s) das URs"
+        }, inplace=True)
         df_aba5.insert(2, "Gerou alguma UR?", "Sim")
         df_aba5["Observações"] = ""
         df_aba5.to_excel(writer, index=False, sheet_name='02_PALAVRAS_CHAVE')
@@ -127,124 +151,79 @@ def converter_para_excel(df_resultado, metadados):
 # -------------------------------------------------------------------------
 # SEÇÃO 1: EXTRAÇÃO DO PDF
 # -------------------------------------------------------------------------
-st.header("1. Extração de Trechos do PDF")
+st.header("1. Extração de Trechos do Livro Didático (PDF)")
 
 with st.container(border=True):
     col1, col2 = st.columns([1, 2])
     with col1:
-        arquivo_enviado = st.file_uploader("Selecione o arquivo PDF", type=["pdf"])
+        arquivo_enviado = st.file_uploader("Selecione o PDF do livro de Física", type=["pdf"])
         
-        st.markdown("**Categorias e Palavras-chave de Busca:**")
-        st.caption("Edite a tabela abaixo. Clique na última linha vazia para adicionar novas categorias.")
+        st.markdown("**Eixos e Palavras-chave de Busca:**")
+        st.caption("Edite a tabela abaixo ou clique na última linha vazia para adicionar novos termos/cientistas.")
         
-        # 1. O dicionário completo com suas categorias
         palavras_chave_por_categoria = {
-            "1. Conceitos gerais de agronegócio e organização da cadeia": [
-                "agronegócio", "negócio agrícola", "negócio agropecuário", "agropecuária", "setor agropecuário", 
-                "setor agrícola", "setor rural", "cadeia produtiva", "cadeia produtiva agropecuária", 
-                "cadeia agroindustrial", "complexo agroindustrial", "agroindústria", "sistema agroalimentar", 
-                "sistema alimentar", "produção rural", "produção do campo", "setor primário", "campo e indústria", 
-                "campo e cidade", "produção e mercado", "produção e consumo", "relações campo-cidade"
+            "1. Cientistas Históricas (Internacionais)": [
+                "Marie Curie", "Curie", "Irène Joliot-Curie", "Joliot-Curie",
+                "Lise Meitner", "Meitner", "Emmy Noether", "Noether",
+                "Chien-Shiung Wu", "Jocelyn Bell", "Bell Burnell",
+                "Vera Rubin", "Henrietta Leavitt", "Henrietta Swan Leavitt",
+                "Cecilia Payne", "Cecilia Payne-Gaposchkin",
+                "Rosalind Franklin", "Mileva Marić", "Mileva Maric",
+                "Hipátia", "Hipatia", "Émilie du Châtelet", "du Châtelet",
+                "Maria Goeppert Mayer", "Goeppert Mayer", "Donna Strickland",
+                "Andrea Ghez", "Anne L'Huillier", "Katherine Johnson",
+                "Mary Jackson", "Dorothy Vaughan", "Valentina Tereshkova",
+                "Sally Ride", "Mae Jemison", "Fabiola Gianotti",
+                "Ada Lovelace", "Hedy Lamarr", "Annie Jump Cannon",
+                "Williamina Fleming", "Antonia Maury", "Maria Mitchell",
+                "Caroline Herschel", "Mary Somerville", "Sophie Germain",
+                "Laura Bassi", "Marietta Blau", "Ida Noddack", "Marguerite Perey",
+                "Hertha Ayrton", "Katharine Burr Blodgett", "Gerty Cori"
             ],
-            "2. Insumos, recursos e suporte à produção": [
-                "insumos", "insumos agrícolas", "insumos agropecuários", "sementes", "mudas", "genética", 
-                "melhoramento genético", "fertilizantes", "adubos", "adubação", "corretivos", "defensivos", 
-                "defensivos agrícolas", "agrotóxicos", "pesticidas", "herbicidas", "inseticidas", "fungicidas", 
-                "bioinsumos", "crédito rural", "financiamento", "seguro rural", "assistência técnica", 
-                "extensão rural", "planejamento produtivo", "pesquisa agropecuária", "crédito agrícola", "seguro agrícola"
+            "2. Cientistas Brasileiras e Contemporâneas": [
+                "Sônia Guimarães", "Sonia Guimaraes", "Márcia Barbosa", "Marcia Barbosa",
+                "Duília de Mello", "Duilia de Mello", "Elisa Frota-Pessôa", "Elisa Frota Pessoa",
+                "Neusa Amato", "Thaisa Storchi Bergmann", "Zélia Ludwig", "Zelia Ludwig",
+                "Katemari Rosa", "Jaqueline Mesquita", "Carolina Nemes",
+                "Belita Koiller", "Yvonne Mascarenhas", "Débora Peres Menezes",
+                "Debora Peres Menezes", "Sabrina Pasterski", "Katie Bouman"
             ],
-            "3. Agricultura e produção vegetal": [
-                "agricultura", "agrícola", "lavoura", "plantio", "cultivo", "colheita", "safra", "entressafra", 
-                "produtividade", "monocultura", "policultura", "agricultura intensiva", "agricultura extensiva", 
-                "culturas permanentes", "culturas temporárias", "soja", "milho", "café", "algodão", "arroz", 
-                "feijão", "trigo", "cana-de-açúcar", "cana", "frutas", "fruticultura", "hortaliças", "horticultura", 
-                "citricultura", "silvicultura", "extrativismo vegetal"
+            "3. Gênero, Equidade e Representatividade": [
+                "mulher", "mulheres", "feminina", "feminino", "femininas", "femininos",
+                "menina", "meninas", "garota", "garotas", "gênero", "questões de gênero",
+                "igualdade de gênero", "equidade de gênero", "desigualdade de gênero",
+                "machismo", "sexismo", "patriarcado", "preconceito", "discriminação",
+                "empoderamento", "protagonismo feminino", "representatividade",
+                "pioneira", "pioneiras", "mulheres na ciência", "mulheres na física",
+                "cientistas mulheres", "prêmio nobel", "laureada", "laureadas"
             ],
-            "4. Pecuária e produção animal": [
-                "pecuária", "criação animal", "rebanho", "gado", "bovino", "bovinocultura", "suinocultura", 
-                "avicultura", "caprinocultura", "ovinocultura", "piscicultura", "aquicultura", "produção de leite", 
-                "produção de carne", "produção de ovos", "confinamento", "pastagem", "manejo animal", 
-                "sanidade animal", "vacinação animal", "abate", "criação intensiva", "criação extensiva", 
-                "pecuária intensiva", "pecuária extensiva"
+            "4. Papéis Científicos e Profissionais (Feminino)": [
+                "cientista", "cientistas", "pesquisadora", "pesquisadoras",
+                "engenheira", "engenheiras", "astrônoma", "astrônomas",
+                "astrofísica", "astrofísicas", "astronauta", "cosmonauta",
+                "inventora", "inventoras", "professora", "professoras",
+                "aluna", "alunas", "estudante", "estudantes", "doutora",
+                "autora", "autoras", "coautora", "colaboradora", "diretora",
+                "tecnóloga", "programadora", "pilota", "operadora", "técnica"
             ],
-            "5. Máquinas, mecanização e infraestrutura produtiva": [
-                "máquinas", "máquinas agrícolas", "tratores", "implementos", "irrigação", "mecanização", 
-                "mecanização do trabalho"
-            ],
-            "6. Beneficiamento, transformação e agroindústria": [
-                "beneficiamento", "processamento", "transformação", "industrialização", "agroindustrial", 
-                "frigorífico", "laticínio", "abatedouro", "usina", "moagem", "torrefação", "pasteurização", 
-                "conservação", "processamento de alimentos", "indústria de alimentos", "indústria alimentícia", 
-                "indústria de bebidas", "indústria sucroenergética", "etanol", "biodiesel", "biocombustível", 
-                "biocombustíveis", "celulose", "papel", "óleo vegetal", "farelo", "açúcar", "suco", 
-                "processamento de carnes", "processamento de leite", "fabricação de derivados"
-            ],
-            "7. Armazenamento, transporte e logística": [
-                "armazenamento", "armazenagem", "silos", "armazéns", "entrepostos", "transporte", "rodovias", 
-                "ferrovias", "hidrovias", "portos", "logística", "distribuição", "cadeia de frio", "embalagem", 
-                "escoamento da produção"
-            ],
-            "8. Comercialização, mercados e economia do agronegócio": [
-                "comercialização", "atacado", "varejo", "exportação", "importação", "mercado interno", 
-                "mercado externo", "commodities", "commodity", "preço agrícola", "preços agrícolas", 
-                "bolsa de mercadorias", "agregação de valor", "rastreabilidade", "emprego", "renda", "PIB", 
-                "produto interno bruto", "balança comercial"
-            ],
-            "9. Tecnologia, inovação e agricultura digital": [
-                "agricultura de precisão", "automação", "sensores", "drones", "satélites", "georreferenciamento", 
-                "biotecnologia", "transgenia", "transgênico", "organismos geneticamente modificados", 
-                "inteligência de dados", "monitoramento", "irrigação inteligente", "plantio direto", 
-                "controle biológico", "agricultura digital", "conectividade rural", "inovação agropecuária", 
-                "inovação agrícola", "agricultura 4.0", "automação agroindustrial"
-            ],
-            "10. Impactos ambientais e uso de recursos naturais": [
-                "desmatamento", "erosão", "contaminação", "uso da água", "consumo de água", "uso do solo", 
-                "degradação", "emissao", "emissões", "gases de efeito estufa", "metano", "biodiversidade", 
-                "queimadas", "resíduos", "efluentes"
-            ],
-            "11. Sustentabilidade, conservação e mitigação ambiental": [
-                "recuperação", "mitigação", "preservação", "sustentabilidade", "sustentável", "economia circular", 
-                "reaproveitamento", "redução de perdas", "aproveitamento de resíduos", "recuperação de solos", 
-                "integração lavoura-pecuária-floresta", "ILPF", "mata ciliar", "reserva legal", 
-                "área de preservação permanente", "APP", "agroecologia", "agricultura orgânica", "produção orgânica", 
-                "produção integrada", "sistema agroflorestal", "produção sustentável"
-            ],
-            "12. Trabalho, relações sociais e questões agrárias": [
-                "trabalho rural", "trabalhador rural", "êxodo rural", "concentração fundiária", "estrutura fundiária", 
-                "reforma agrária", "assentamento", "conflito no campo", "propriedade rural", "pequena propriedade", 
-                "grande propriedade", "latifúndio", "minifúndio", "camponês", "campesinato", "pequeno produtor", 
-                "grande produtor", "direitos trabalhistas", "trabalho análogo à escravidão", "trabalho infantil", 
-                "conflito fundiário"
-            ],
-            "13. Formas de organização e modelos de produção rural": [
-                "cooperativismo", "cooperativa", "associativismo", "agricultura familiar", "agricultura empresarial", 
-                "agricultura comercial", "agricultura de subsistência", "agricultura convencional"
-            ],
-            "14. Políticas públicas, regulação e institucionalização": [
-                "política agrícola", "política agrária", "regularização fundiária", "zoneamento agrícola", 
-                "fiscalização", "licenciamento", "legislação ambiental", "código florestal", "vigilância sanitária", 
-                "inspeção sanitária", "certificação", "subsídio", "incentivo fiscal"
-            ],
-            "15. Segurança alimentar, abastecimento e consumo": [
-                "segurança alimentar", "soberania alimentar", "abastecimento", "fome", "consumo", "alimentação", 
-                "alimento", "alimentos", "desperdício", "desperdício de alimentos", "perda de alimentos", 
-                "perdas pós-colheita", "conservação de alimentos", "qualidade dos alimentos", "origem dos alimentos", 
-                "rastreabilidade dos alimentos", "cadeia alimentar", "preço dos alimentos", "acesso aos alimentos"
+            "5. Personagens Femininas Comuns (Exercícios/Exemplos)": [
+                "Maria", "Ana", "Joana", "Júlia", "Julia", "Mariana", "Beatriz",
+                "Camila", "Fernanda", "Gabriela", "Helena", "Laura", "Letícia",
+                "Luísa", "Luisa", "Patrícia", "Paula", "Sofia", "Cláudia",
+                "Carla", "Renata", "Simone", "Sandra", "Marta", "Alice",
+                "Bianca", "Bruna", "Carolina", "Daniela", "Eduarda", "Flávia",
+                "Isabela", "Larissa", "Amanda", "Aline", "Raquel", "Teresa"
             ]
         }
         
-        # 2. Transforma o dicionário em listas para criar a tabela
         categorias_lista = list(palavras_chave_por_categoria.keys())
-        # Junta a lista de palavras com vírgula para aparecer certinho na tabela
         palavras_lista = [", ".join(palavras) for palavras in palavras_chave_por_categoria.values()]
 
-        # 3. Cria a tabela visual com os dados
         dados_iniciais = pd.DataFrame({
             "Categoria": categorias_lista,
             "Palavras-chave": palavras_lista
         })
         
-        # Renderiza a tabela editável na interface
         tabela_editavel = st.data_editor(
             dados_iniciais,
             num_rows="dynamic",
@@ -257,188 +236,4 @@ with st.container(border=True):
 
         if btn_iniciar:
             if arquivo_enviado is None:
-                st.warning("⚠️ Selecione um arquivo PDF.")
-            else:
-                # Transforma a tabela que o usuário editou de volta para o formato que a IA entende
-                dicionario_filtrado = {}
-                for index, row in tabela_editavel.iterrows():
-                    cat = str(row["Categoria"]).strip()
-                    palavras = str(row["Palavras-chave"]).strip()
-                    
-                    if cat and cat.lower() != 'nan' and palavras and palavras.lower() != 'nan':
-                        lista_palavras = [p.strip() for p in palavras.split(',') if p.strip()]
-                        if lista_palavras:
-                            dicionario_filtrado[cat] = lista_palavras
-
-                if not dicionario_filtrado:
-                    st.error("❌ Nenhuma categoria válida encontrada. Preencha a tabela corretamente.")
-                else:
-                    caminho_pdf_temp = "temp_processamento.pdf"
-                    caminho_excel_saida = "resultado_analise.xlsx"
-                    
-                    with open(caminho_pdf_temp, "wb") as f:
-                        f.write(arquivo_enviado.getbuffer())
-                    
-                    with st.spinner("Extraindo trechos do PDF..."):
-                        analisar_pdf_para_planilha(caminho_pdf_temp, dicionario_filtrado, caminho_excel_saida)
-                    
-                    st.success("Extração concluída!")
-                    if os.path.exists(caminho_excel_saida):
-                        with open(caminho_excel_saida, "rb") as file:
-                            st.download_button(
-                                label="📥 Baixar Planilha de Trechos Extraídos (.xlsx)",
-                                data=file,
-                                file_name=f"{os.path.splitext(arquivo_enviado.name)[0]}_trechos.xlsx",
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                            )
-# -------------------------------------------------------------------------
-# SEÇÃO 2: CATEGORIZAÇÃO VIA OLLAMA
-# -------------------------------------------------------------------------
-st.header("🦙 2. Categorização Inteligente Local (Ollama)")
-
-with st.container(border=True):
-    col_c1, col_c2 = st.columns(2)
-    with col_c1:
-        modelo_ollama = st.text_input("Modelo do Ollama:", value="llama3.2")
-    with col_c2:
-        host_ollama = st.text_input("Endereço do Servidor Ollama:", value="http://localhost:11434")
-    
-    planilha_para_ia = st.file_uploader("Selecione a planilha com os trechos extraídos para categorizar", type=["xlsx", "xls"])
-    
-    if planilha_para_ia is not None:
-        df_ia = pd.read_excel(planilha_para_ia)
-        colunas = df_ia.columns.tolist()
-        coluna_trechos = st.selectbox("Selecione a coluna que contém os TRECHOS de texto:", colunas)
-        
-        st.subheader("⚙️ Defina as Categorias e o Prompt")
-        
-        legenda_padrao = (
-            "A - Tema Central do Agronegócio/Cadeia Agropecuária\n"
-            "B - Cadeia Agropecuária Indispensável ao Sentido\n"
-            "C - Proximidade Temática/Periférico\n"
-            "D - Sem Relação Demonstrável\n"
-            "E - Ilegível ou Incompleto"
-        )
-        
-        categorias_ia = st.text_area("Legenda de Classificação (A-E):", legenda_padrao, height=130)
-        
-        instrucao_padrao = (
-            "Análise o trecho fornecido. Você deve responder OBRIGATORIAMENTE no formato separado por '|':\n"
-            "Classificação (A, B, C, D ou E) | Categoria Principal | Gênero Textual (ex: Texto Didático, Infográfico, Exercício, Mapa) | Breve Justificativa"
-        )
-        prompt_instrucao = st.text_area("Instruções para a IA:", instrucao_padrao, height=110)
-        
-        if st.button("🧠 Classificar Trechos com Ollama", type="primary"):
-            if not host_ollama.strip() or "seu-link-aqui" in host_ollama:
-                st.error("❌ Por favor, insira o endereço válido do Ollama.")
-            else:
-                progresso = st.progress(0)
-                status_text = st.empty()
-                
-                classificacoes, categorias, generos, justificativas = [], [], [], []
-                total_linhas = len(df_ia)
-                
-                url_base = host_ollama.strip().rstrip('/')
-                endpoint = f"{url_base}/api/generate"
-                
-                headers = {
-                    "ngrok-skip-browser-warning": "true",
-                    "User-Agent": "Mozilla/5.0",
-                    "Content-Type": "application/json"
-                }
-                
-                for index, row in df_ia.iterrows():
-                    trecho = str(row[coluna_trechos])
-                    prompt_completo = f"{prompt_instrucao}\n\nLegenda:\n{categorias_ia}\n\nTrecho:\n\"{trecho}\""
-                    payload = {"model": modelo_ollama, "prompt": prompt_completo, "stream": False}
-                    
-                    try:
-                        response = requests.post(endpoint, json=payload, headers=headers, timeout=60)
-                        response.raise_for_status()
-                        resposta_texto = response.json().get("response", "").strip()
-                        
-                        partes = [p.strip() for p in resposta_texto.split("|")]
-                        
-                        if len(partes) >= 4:
-                            classificacoes.append(partes[0][0].upper() if partes[0] else "E")
-                            categorias.append(partes[1])
-                            generos.append(partes[2])
-                            justificativas.append(partes[3])
-                        elif len(partes) == 2:
-                            classificacoes.append(partes[0][0].upper() if partes[0] else "E")
-                            categorias.append("Geral")
-                            generos.append("Texto Didático")
-                            justificativas.append(partes[1])
-                        else:
-                            classificacoes.append("E")
-                            categorias.append("Geral")
-                            generos.append("Texto Didático")
-                            justificativas.append(resposta_texto)
-                    except Exception as e:
-                        classificacoes.append("Erro")
-                        categorias.append("Erro")
-                        generos.append("Erro")
-                        justificativas.append(str(e))
-                    
-                    progresso.progress((index + 1) / total_linhas)
-                    status_text.text(f"Analisando trecho {index + 1} de {total_linhas}...")
-                
-                df_ia["Classificação IA"] = classificacoes
-                df_ia["Categoria Principal IA"] = categorias
-                df_ia["Gênero Textual"] = generos
-                df_ia["Justificativa IA"] = justificativas
-                
-                st.session_state["df_categorizado"] = df_ia
-                st.success("✅ Categorização concluída!")
-
-st.markdown("---")
-
-# -------------------------------------------------------------------------
-# SEÇÃO 3: GRÁFICOS
-# -------------------------------------------------------------------------
-st.header("📈 3. Visualização de Gráficos")
-
-if "df_categorizado" in st.session_state:
-    df_plot = st.session_state["df_categorizado"]
-else:
-    planilha_grafico = st.file_uploader("Ou faça upload de uma planilha já categorizada para ver os gráficos", type=["xlsx", "xls"])
-    df_plot = pd.read_excel(planilha_grafico) if planilha_grafico is not None else None
-
-if df_plot is not None:
-    colunas_plot = df_plot.columns.tolist()
-    col1, col2 = st.columns(2)
-    with col1:
-        idx_default = colunas_plot.index("Classificação IA") if "Classificação IA" in colunas_plot else 0
-        coluna_cat = st.selectbox("Coluna das Categorias:", colunas_plot, index=idx_default)
-    with col2:
-        tipo_grafico = st.radio("Tipo de Gráfico:", ["Gráfico de Pizza", "Gráfico de Barras", "Diagrama (Funil)"], horizontal=True)
-    
-    contagem = df_plot[coluna_cat].value_counts().reset_index()
-    contagem.columns = [coluna_cat, "Quantidade"]
-    
-    if tipo_grafico == "Gráfico de Pizza":
-        fig = px.pie(contagem, values="Quantidade", names=coluna_cat, title="Distribuição por Classificação")
-    elif tipo_grafico == "Gráfico de Barras":
-        fig = px.bar(contagem, x=coluna_cat, y="Quantidade", color=coluna_cat, title="Quantidade por Classificação")
-    else:
-        fig = px.funnel(contagem, x="Quantidade", y=coluna_cat, color=coluna_cat, title="Diagrama de Funil de Classificações")
-    
-    st.plotly_chart(fig, use_container_width=True)
-
-# -------------------------------------------------------------------------
-# SEÇÃO 4: DOWNLOAD FINAL COM 5 ABAS
-# -------------------------------------------------------------------------
-if df_plot is not None:
-    st.markdown("---")
-    st.header("✅ 4. Exportar Planilha Final (5 Abas)")
-    st.info("💡 Preencha os Dados do Material no menu lateral esquerdo antes de baixar!")
-    
-    excel_final = converter_para_excel(df_plot, metadados_livro)
-    
-    st.download_button(
-        label="📥 BAIXAR PLANILHA FINAL FORMATADA (5 ABAS)",
-        data=excel_final,
-        file_name="Analise_Completa_Formatada.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True
-    )
+                st.warning("⚠️ Selecione um
